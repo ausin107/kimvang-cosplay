@@ -17,6 +17,7 @@ import {
   Sparkles,
   Database,
   AlertCircle,
+  Copy,
 } from "lucide-react";
 import { useKimVang } from "@/context/KimVangContext";
 import {
@@ -31,6 +32,50 @@ const NOV_2026_DAYS = Array.from({ length: 30 }, (_, i) => {
   return `2026-11-${day}`;
 });
 
+const SUPABASE_INIT_SQL = `CREATE TABLE IF NOT EXISTS public.products (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    slug VARCHAR(200) UNIQUE NOT NULL,
+    name VARCHAR(200) NOT NULL,
+    character_name VARCHAR(120) NOT NULL,
+    series_name VARCHAR(150) NOT NULL,
+    category VARCHAR(50) DEFAULT 'COSTUME_FEMALE',
+    size_label VARCHAR(20) DEFAULT 'M',
+    measurements TEXT,
+    reference_rent_price NUMERIC(12,0),
+    reference_buy_price NUMERIC(12,0),
+    images TEXT[] NOT NULL DEFAULT '{}',
+    included_items TEXT,
+    fabric_note TEXT,
+    care_note TEXT,
+    is_available BOOLEAN DEFAULT TRUE,
+    is_hidden BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS public.blocked_dates (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    product_id UUID REFERENCES public.products(id) ON DELETE CASCADE,
+    start_date DATE NOT NULL,
+    end_date DATE NOT NULL,
+    note VARCHAR(255),
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+ALTER TABLE public.products ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.blocked_dates ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Admin full access products" ON public.products;
+CREATE POLICY "Admin full access products" ON public.products FOR ALL USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Admin full access blocked_dates" ON public.blocked_dates;
+CREATE POLICY "Admin full access blocked_dates" ON public.blocked_dates FOR ALL USING (true) WITH CHECK (true);
+
+INSERT INTO storage.buckets (id, name, public) VALUES ('costumes', 'costumes', true) ON CONFLICT (id) DO UPDATE SET public = true;
+DROP POLICY IF EXISTS "Public Read Costumes Bucket" ON storage.objects;
+CREATE POLICY "Public Read Costumes Bucket" ON storage.objects FOR SELECT USING (bucket_id = 'costumes');
+DROP POLICY IF EXISTS "Admin Upload Costumes Bucket" ON storage.objects;
+CREATE POLICY "Admin Upload Costumes Bucket" ON storage.objects FOR INSERT WITH CHECK (bucket_id = 'costumes');`;
+
 export default function AdminDashboardPage() {
   const router = useRouter();
   const {
@@ -38,8 +83,10 @@ export default function AdminDashboardPage() {
     blockedDates,
     isLoadingData,
     isSupabaseConnected,
+    needsSqlSchemaSetup,
     isAdminAuthenticated,
     adminEmail,
+    refreshData,
     logoutAdmin,
     uploadImageFile,
     toggleProductAvailability,
@@ -50,10 +97,8 @@ export default function AdminDashboardPage() {
     removeBlockedDate,
   } = useKimVang();
 
-  // Filter: Tất cả | Đang thuê
   const [filterMode, setFilterMode] = useState<"ALL" | "RENTED_ONLY">("ALL");
 
-  // Modal 1: Bộ chọn lịch bận thủ công (Manual Blocked Dates)
   const [calendarModalProduct, setCalendarModalProduct] =
     useState<ShowcaseProduct | null>(null);
   const [blockStart, setBlockStart] = useState("2026-11-15");
@@ -65,7 +110,6 @@ export default function AdminDashboardPage() {
     "Khách quen qua cửa hàng lấy đồ đi Fes"
   );
 
-  // Modal 2: Form tải đồ & Upload ảnh trực tiếp lên Supabase Storage + Database
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [name, setName] = useState("");
   const [characterName, setCharacterName] = useState("");
@@ -88,7 +132,6 @@ export default function AdminDashboardPage() {
   const [toast, setToast] = useState("");
   const [errorMsg, setErrorMsg] = useState("");
 
-  // Bắt buộc phải login mới được vào /admin
   useEffect(() => {
     if (!isLoadingData && !isAdminAuthenticated) {
       router.replace("/admin/login");
@@ -110,10 +153,23 @@ export default function AdminDashboardPage() {
 
   const showToast = (msg: string) => {
     setToast(msg);
-    setTimeout(() => setToast(""), 4500);
+    setTimeout(() => setToast(""), 5000);
   };
 
-  // Upload 1 hoặc nhiều file ảnh lên Supabase Storage (Bucket 'costumes')
+  const handleCopySqlAndOpenDashboard = async () => {
+    try {
+      await navigator.clipboard.writeText(SUPABASE_INIT_SQL);
+    } catch {}
+    showToast(
+      "Đã sao chép lệnh SQL! Hãy dán (Ctrl+V) vào cửa sổ Supabase SQL Editor vừa mở rồi bấm RUN."
+    );
+    window.open(
+      "https://supabase.com/dashboard/project/rbggrorztvuufdoauomk/sql/new",
+      "_blank",
+      "noopener,noreferrer"
+    );
+  };
+
   const handleFilesSelected = async (
     e: React.ChangeEvent<HTMLInputElement>
   ) => {
@@ -123,9 +179,7 @@ export default function AdminDashboardPage() {
     setUploadingImage(true);
     setErrorMsg("");
     setUploadStatusMsg(
-      `Đang tải ${files.length} ảnh lên ${
-        isSupabaseConnected ? "Supabase Storage (costumes)" : "bộ nhớ"
-      }...`
+      `Đang tải ${files.length} ảnh lên Supabase Storage (costumes)...`
     );
 
     const newUrls: string[] = [];
@@ -187,7 +241,6 @@ export default function AdminDashboardPage() {
       return;
     }
 
-    // Reset form
     setName("");
     setCharacterName("");
     setSeriesName("");
@@ -195,7 +248,8 @@ export default function AdminDashboardPage() {
     setUploadStatusMsg("");
     setIsAddModalOpen(false);
     showToast(
-      `Đã lưu bộ "${res.product?.name}" vào Database và hiển thị lên Web!`
+      res.warning ||
+        `Đã lưu bộ "${res.product?.name}" vào Supabase Database và hiển thị lên Web!`
     );
   };
 
@@ -238,15 +292,15 @@ export default function AdminDashboardPage() {
               </span>
               <span
                 className={`text-[10px] px-2 py-0.5 rounded-full font-semibold flex items-center gap-1 ${
-                  isSupabaseConnected
+                  isSupabaseConnected && !needsSqlSchemaSetup
                     ? "bg-emerald-950 text-emerald-300 border border-emerald-700"
                     : "bg-amber-950 text-amber-300 border border-amber-700"
                 }`}
               >
                 <Database className="w-3 h-3" />
-                {isSupabaseConnected
-                  ? "Đã kết nối Supabase DB + Storage"
-                  : "Chế độ Local (Chưa điền biến Supabase)"}
+                {isSupabaseConnected && !needsSqlSchemaSetup
+                  ? "Đã kết nối Supabase (rbggrorztvuufdoauomk)"
+                  : "Supabase (Chờ chạy lệnh tạo bảng SQL lần đầu)"}
               </span>
               <span className="text-[11px] text-zinc-400">({adminEmail})</span>
             </div>
@@ -305,6 +359,41 @@ export default function AdminDashboardPage() {
 
       {/* Main Content */}
       <div className="max-w-8xl mx-auto px-4 sm:px-6 py-6 space-y-5 tabular-nums">
+        {/* Banner hướng dẫn chạy SQL 1 chạm nếu Project Supabase mới tạo chưa có bảng products */}
+        {needsSqlSchemaSetup && (
+          <div className="p-4 rounded-2xl bg-amber-50 border-2 border-amber-300 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div className="text-xs space-y-1">
+              <p className="font-display font-bold text-sm text-amber-950">
+                Bước Khởi Tạo Lần Đầu: Tạo bảng <code>products</code> & bucket{" "}
+                <code>costumes</code> trên Supabase
+              </p>
+              <p className="text-amber-900">
+                Project Supabase <code>rbggrorztvuufdoauomk</code> của bạn đã
+                kết nối thành công nhưng chưa có bảng <code>products</code>. Bấm
+                nút bên phải để tự động copy mã SQL và mở thẳng SQL Editor của
+                Supabase rồi bấm <strong>RUN</strong>.
+              </p>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={handleCopySqlAndOpenDashboard}
+                className="px-4 py-2.5 rounded-xl bg-jet text-gold text-xs font-display font-bold flex items-center gap-1.5 hover:bg-zinc-800"
+              >
+                <Copy className="w-3.5 h-3.5" />
+                <span>Copy SQL & Mở Supabase SQL Editor</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => refreshData()}
+                className="px-3 py-2.5 rounded-xl bg-white border border-amber-400 text-amber-950 text-xs font-semibold"
+              >
+                Đã chạy xong
+              </button>
+            </div>
+          </div>
+        )}
+
         {toast && (
           <div className="p-3.5 rounded-2xl bg-buy-bg border border-buy-border text-buy-text text-xs sm:text-sm font-semibold flex items-center gap-2">
             <CheckCircle2 className="w-4 h-4 shrink-0" />
@@ -313,7 +402,6 @@ export default function AdminDashboardPage() {
         )}
 
         {products.length === 0 ? (
-          /* TRẠNG THÁI KHI KHO ĐỒ ĐANG TRỐNG (0 SẢN PHẨM) */
           <div className="p-10 sm:p-14 rounded-3xl bg-white border-2 border-dashed border-gold/60 text-center space-y-4 max-w-2xl mx-auto my-6">
             <div className="w-14 h-14 rounded-2xl bg-jet text-gold flex items-center justify-center mx-auto border border-gold/40">
               <UploadCloud className="w-7 h-7" />
@@ -502,7 +590,7 @@ export default function AdminDashboardPage() {
         )}
       </div>
 
-      {/* MODAL 1: BỘ CHỌN LỊCH BẬN THỦ CÔNG (MANUAL BLOCKED DATES) */}
+      {/* MODAL 1: BỘ CHỌN LỊCH BẬN THỦ CÔNG */}
       {calendarModalProduct && (
         <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
           <div className="w-full max-w-lg bg-white rounded-3xl border border-hairline overflow-hidden shadow-2xl space-y-4 p-5 sm:p-6 tabular-nums">
@@ -659,7 +747,6 @@ export default function AdminDashboardPage() {
             </div>
 
             <form onSubmit={handleCreateProduct} className="space-y-4 text-xs">
-              {/* Upload ảnh lên Supabase Storage */}
               <div className="p-4 rounded-2xl border-2 border-dashed border-gold/60 bg-gold-light/30 space-y-3">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                   <label className="font-bold text-charcoal flex items-center gap-2 cursor-pointer">

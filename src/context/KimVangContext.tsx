@@ -16,6 +16,7 @@ interface KimVangContextType {
   blockedDates: BlockedDateRange[];
   isLoadingData: boolean;
   isSupabaseConnected: boolean;
+  needsSqlSchemaSetup: boolean;
   isAdminAuthenticated: boolean;
   adminEmail: string | null;
   refreshData: () => Promise<void>;
@@ -30,7 +31,7 @@ interface KimVangContextType {
   toggleProductHidden: (productId: string) => Promise<void>;
   addProduct: (
     newProduct: Omit<ShowcaseProduct, "id" | "created_at">
-  ) => Promise<{ product?: ShowcaseProduct; error?: string }>;
+  ) => Promise<{ product?: ShowcaseProduct; error?: string; warning?: string }>;
   deleteProduct: (productId: string) => Promise<void>;
   addBlockedDate: (
     productId: string,
@@ -49,6 +50,8 @@ export function KimVangProvider({ children }: { children: React.ReactNode }) {
   const [isLoadingData, setIsLoadingData] = useState<boolean>(true);
   const [isSupabaseConnected, setIsSupabaseConnected] =
     useState<boolean>(false);
+  const [needsSqlSchemaSetup, setNeedsSqlSchemaSetup] =
+    useState<boolean>(false);
   const [isAdminAuthenticated, setIsAdminAuthenticated] =
     useState<boolean>(false);
   const [adminEmail, setAdminEmail] = useState<string | null>(null);
@@ -63,13 +66,21 @@ export function KimVangProvider({ children }: { children: React.ReactNode }) {
     } catch {}
   };
 
+  const loadLocalFallback = () => {
+    try {
+      const savedProds = localStorage.getItem("kv_db_products_v3");
+      const savedBlocked = localStorage.getItem("kv_db_blocked_v3");
+      if (savedProds) setProducts(JSON.parse(savedProds));
+      if (savedBlocked) setBlockedDates(JSON.parse(savedBlocked));
+    } catch {}
+  };
+
   const refreshData = useCallback(async () => {
     setIsLoadingData(true);
     const { isConfigured } = getSupabaseConfig();
     const supabase = getSupabaseClient();
     setIsSupabaseConnected(isConfigured && !!supabase);
 
-    // Check local admin session first
     let hasLocalAdmin = false;
     try {
       const savedAuth = sessionStorage.getItem("kv_admin_session_v3");
@@ -107,7 +118,12 @@ export function KimVangProvider({ children }: { children: React.ReactNode }) {
             .order("start_date", { ascending: true }),
         ]);
 
-        if (!prodRes.error && prodRes.data) {
+        if (prodRes.error) {
+          // Table not created yet in Supabase SQL Editor (e.g. PGRST205)
+          setNeedsSqlSchemaSetup(true);
+          loadLocalFallback();
+        } else if (prodRes.data) {
+          setNeedsSqlSchemaSetup(false);
           setProducts(
             prodRes.data.map((r) => ({
               ...r,
@@ -122,27 +138,20 @@ export function KimVangProvider({ children }: { children: React.ReactNode }) {
               images: Array.isArray(r.images) ? r.images : [],
             }))
           );
-        }
-        if (!blockRes.error && blockRes.data) {
-          setBlockedDates(blockRes.data);
+          if (!blockRes.error && blockRes.data) {
+            setBlockedDates(blockRes.data);
+          }
         }
       } catch {
-        // Ignore network errors
+        loadLocalFallback();
       } finally {
         setIsLoadingData(false);
       }
       return;
     }
 
-    try {
-      const savedProds = localStorage.getItem("kv_db_products_v3");
-      const savedBlocked = localStorage.getItem("kv_db_blocked_v3");
-      if (savedProds) setProducts(JSON.parse(savedProds));
-      if (savedBlocked) setBlockedDates(JSON.parse(savedBlocked));
-    } catch {
-    } finally {
-      setIsLoadingData(false);
-    }
+    loadLocalFallback();
+    setIsLoadingData(false);
   }, []);
 
   useEffect(() => {
@@ -169,10 +178,7 @@ export function KimVangProvider({ children }: { children: React.ReactNode }) {
           email: cleanEmail,
           password,
         });
-        if (error) {
-          return { ok: false, error: error.message };
-        }
-        if (data.user) {
+        if (!error && data.user) {
           setIsAdminAuthenticated(true);
           setAdminEmail(cleanEmail);
           try {
@@ -202,7 +208,7 @@ export function KimVangProvider({ children }: { children: React.ReactNode }) {
           return { ok: true };
         }
 
-        // Nếu tài khoản chưa tồn tại trên Supabase Auth, thử tự động tạo (signUp) cho Admin lần đầu
+        // Tự động đăng ký tài khoản Admin lần đầu nếu chưa tồn tại trên Supabase Auth
         const signUpRes = await supabase.auth.signUp({
           email: cleanEmail,
           password,
@@ -219,13 +225,6 @@ export function KimVangProvider({ children }: { children: React.ReactNode }) {
           await refreshData();
           return { ok: true };
         }
-
-        return {
-          ok: false,
-          error:
-            error?.message ||
-            "Sai email hoặc mật khẩu. Vui lòng kiểm tra lại.",
-        };
       }
     }
 
@@ -279,7 +278,6 @@ export function KimVangProvider({ children }: { children: React.ReactNode }) {
       }
     }
 
-    // Fallback đọc Base64 Data URL nếu bucket chưa bật quyền hoặc mạng gián đoạn
     return new Promise((resolve) => {
       const reader = new FileReader();
       reader.onload = () => {
@@ -297,7 +295,11 @@ export function KimVangProvider({ children }: { children: React.ReactNode }) {
 
   const addProduct = async (
     payload: Omit<ShowcaseProduct, "id" | "created_at">
-  ): Promise<{ product?: ShowcaseProduct; error?: string }> => {
+  ): Promise<{
+    product?: ShowcaseProduct;
+    error?: string;
+    warning?: string;
+  }> => {
     const supabase = getSupabaseClient();
     if (supabase) {
       const { data, error } = await supabase
@@ -324,27 +326,27 @@ export function KimVangProvider({ children }: { children: React.ReactNode }) {
         .select()
         .single();
 
-      if (error || !data) {
-        return {
-          error:
-            error?.message ||
-            "Không thể lưu vào bảng 'products' trên Supabase. Hãy kiểm tra đã chạy file database/supabase_schema.sql chưa.",
+      if (!error && data) {
+        setNeedsSqlSchemaSetup(false);
+        const created: ShowcaseProduct = {
+          ...data,
+          reference_rent_price:
+            data.reference_rent_price !== null
+              ? Number(data.reference_rent_price)
+              : null,
+          reference_buy_price:
+            data.reference_buy_price !== null
+              ? Number(data.reference_buy_price)
+              : null,
         };
+        const next = [created, ...products];
+        setProducts(next);
+        persistLocalFallback(next, blockedDates);
+        return { product: created };
       }
 
-      const created: ShowcaseProduct = {
-        ...data,
-        reference_rent_price:
-          data.reference_rent_price !== null
-            ? Number(data.reference_rent_price)
-            : null,
-        reference_buy_price:
-          data.reference_buy_price !== null
-            ? Number(data.reference_buy_price)
-            : null,
-      };
-      setProducts((prev) => [created, ...prev]);
-      return { product: created };
+      // Nếu bảng 'products' trên Supabase chưa chạy SQL khởi tạo, vẫn lưu lên Web và báo nhắc chạy SQL
+      setNeedsSqlSchemaSetup(true);
     }
 
     const created: ShowcaseProduct = {
@@ -355,7 +357,11 @@ export function KimVangProvider({ children }: { children: React.ReactNode }) {
     const next = [created, ...products];
     setProducts(next);
     persistLocalFallback(next, blockedDates);
-    return { product: created };
+    return {
+      product: created,
+      warning:
+        "Đã hiển thị lên Web! Lưu ý: Hãy chạy file database/supabase_schema.sql trong SQL Editor của Supabase để đồng bộ vĩnh viễn lên bảng products.",
+    };
   };
 
   const toggleProductAvailability = async (productId: string) => {
@@ -364,7 +370,7 @@ export function KimVangProvider({ children }: { children: React.ReactNode }) {
     const nextVal = !target.is_available;
 
     const supabase = getSupabaseClient();
-    if (supabase) {
+    if (supabase && !needsSqlSchemaSetup) {
       await supabase
         .from("products")
         .update({ is_available: nextVal })
@@ -384,7 +390,7 @@ export function KimVangProvider({ children }: { children: React.ReactNode }) {
     const nextVal = !target.is_hidden;
 
     const supabase = getSupabaseClient();
-    if (supabase) {
+    if (supabase && !needsSqlSchemaSetup) {
       await supabase
         .from("products")
         .update({ is_hidden: nextVal })
@@ -400,7 +406,7 @@ export function KimVangProvider({ children }: { children: React.ReactNode }) {
 
   const deleteProduct = async (productId: string) => {
     const supabase = getSupabaseClient();
-    if (supabase) {
+    if (supabase && !needsSqlSchemaSetup) {
       await supabase.from("products").delete().eq("id", productId);
     }
 
@@ -422,7 +428,7 @@ export function KimVangProvider({ children }: { children: React.ReactNode }) {
     const cleanNote = note.trim() || "Khách đặt thuê (Admin khóa lịch tay)";
 
     const supabase = getSupabaseClient();
-    if (supabase) {
+    if (supabase && !needsSqlSchemaSetup) {
       const { data, error } = await supabase
         .from("blocked_dates")
         .insert([
@@ -457,7 +463,7 @@ export function KimVangProvider({ children }: { children: React.ReactNode }) {
 
   const removeBlockedDate = async (blockedId: string) => {
     const supabase = getSupabaseClient();
-    if (supabase) {
+    if (supabase && !needsSqlSchemaSetup) {
       await supabase.from("blocked_dates").delete().eq("id", blockedId);
     }
     const nextBlocked = blockedDates.filter((b) => b.id !== blockedId);
@@ -475,6 +481,7 @@ export function KimVangProvider({ children }: { children: React.ReactNode }) {
         blockedDates,
         isLoadingData,
         isSupabaseConnected,
+        needsSqlSchemaSetup,
         isAdminAuthenticated,
         adminEmail,
         refreshData,
