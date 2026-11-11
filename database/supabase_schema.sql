@@ -1,6 +1,5 @@
 -- ============================================================================
 -- KIMVANG SHOWCASE & ADMIN CMS - SUPABASE SQL SCHEMA (DATABASE + STORAGE + AUTH)
--- Copy toàn bộ file này dán vào mục SQL Editor trên Supabase rồi bấm RUN
 -- ============================================================================
 
 -- 1. Bảng lưu trữ thông tin trang phục (Mặc định ban đầu rỗng 100%)
@@ -50,17 +49,15 @@ CREATE POLICY "Public can view blocked dates"
 ON public.blocked_dates FOR SELECT
 USING (true);
 
-DROP POLICY IF EXISTS "Authenticated admin full access products" ON public.products;
-CREATE POLICY "Authenticated admin full access products"
+DROP POLICY IF EXISTS "Admin full access products" ON public.products;
+CREATE POLICY "Admin full access products"
 ON public.products FOR ALL
-TO authenticated
 USING (true)
 WITH CHECK (true);
 
-DROP POLICY IF EXISTS "Authenticated admin full access blocked_dates" ON public.blocked_dates;
-CREATE POLICY "Authenticated admin full access blocked_dates"
+DROP POLICY IF EXISTS "Admin full access blocked_dates" ON public.blocked_dates;
+CREATE POLICY "Admin full access blocked_dates"
 ON public.blocked_dates FOR ALL
-TO authenticated
 USING (true)
 WITH CHECK (true);
 
@@ -69,7 +66,7 @@ INSERT INTO storage.buckets (id, name, public)
 VALUES ('costumes', 'costumes', true)
 ON CONFLICT (id) DO UPDATE SET public = true;
 
--- Chính sách Storage: Ai cũng xem được ảnh, chỉ Admin đã đăng nhập mới được Upload / Xóa ảnh
+-- Chính sách Storage cho Bucket 'costumes'
 DROP POLICY IF EXISTS "Public Read Costumes Bucket" ON storage.objects;
 CREATE POLICY "Public Read Costumes Bucket"
 ON storage.objects FOR SELECT
@@ -78,17 +75,14 @@ USING (bucket_id = 'costumes');
 DROP POLICY IF EXISTS "Admin Upload Costumes Bucket" ON storage.objects;
 CREATE POLICY "Admin Upload Costumes Bucket"
 ON storage.objects FOR INSERT
-TO authenticated
 WITH CHECK (bucket_id = 'costumes');
 
 DROP POLICY IF EXISTS "Admin Update Costumes Bucket" ON storage.objects;
 CREATE POLICY "Admin Update Costumes Bucket"
 ON storage.objects FOR UPDATE
-TO authenticated
 USING (bucket_id = 'costumes');
 
 DROP POLICY IF EXISTS "Admin Delete Costumes Bucket" ON storage.objects;
 CREATE POLICY "Admin Delete Costumes Bucket"
 ON storage.objects FOR DELETE
-TO authenticated
 USING (bucket_id = 'costumes');

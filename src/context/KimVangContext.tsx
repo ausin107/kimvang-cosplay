@@ -1,6 +1,12 @@
 "use client";
 
-import React, { createContext, useContext, useState, useEffect, useCallback } from "react";
+import React, {
+  createContext,
+  useContext,
+  useState,
+  useEffect,
+  useCallback,
+} from "react";
 import { ShowcaseProduct, BlockedDateRange } from "@/types/kimvang";
 import { getSupabaseClient, getSupabaseConfig } from "@/lib/supabase";
 
@@ -15,7 +21,8 @@ interface KimVangContextType {
   refreshData: () => Promise<void>;
   loginAdmin: (
     email: string,
-    password: string
+    password: string,
+    isSignUp?: boolean
   ) => Promise<{ ok: boolean; error?: string }>;
   logoutAdmin: () => Promise<void>;
   uploadImageFile: (file: File) => Promise<{ url: string; error?: string }>;
@@ -37,11 +44,11 @@ interface KimVangContextType {
 const KimVangContext = createContext<KimVangContextType | undefined>(undefined);
 
 export function KimVangProvider({ children }: { children: React.ReactNode }) {
-  // Mới đầu vào chưa có sản phẩm nào hết (mảng rỗng) và chưa đăng nhập Admin (false)
   const [products, setProducts] = useState<ShowcaseProduct[]>([]);
   const [blockedDates, setBlockedDates] = useState<BlockedDateRange[]>([]);
   const [isLoadingData, setIsLoadingData] = useState<boolean>(true);
-  const [isSupabaseConnected, setIsSupabaseConnected] = useState<boolean>(false);
+  const [isSupabaseConnected, setIsSupabaseConnected] =
+    useState<boolean>(false);
   const [isAdminAuthenticated, setIsAdminAuthenticated] =
     useState<boolean>(false);
   const [adminEmail, setAdminEmail] = useState<string | null>(null);
@@ -53,9 +60,7 @@ export function KimVangProvider({ children }: { children: React.ReactNode }) {
     try {
       localStorage.setItem("kv_db_products_v3", JSON.stringify(nextProducts));
       localStorage.setItem("kv_db_blocked_v3", JSON.stringify(nextBlocked));
-    } catch {
-      // Ignore storage errors
-    }
+    } catch {}
   };
 
   const refreshData = useCallback(async () => {
@@ -64,21 +69,33 @@ export function KimVangProvider({ children }: { children: React.ReactNode }) {
     const supabase = getSupabaseClient();
     setIsSupabaseConnected(isConfigured && !!supabase);
 
+    // Check local admin session first
+    let hasLocalAdmin = false;
+    try {
+      const savedAuth = sessionStorage.getItem("kv_admin_session_v3");
+      if (savedAuth) {
+        const parsed = JSON.parse(savedAuth);
+        if (parsed.isAuthenticated) {
+          hasLocalAdmin = true;
+          setIsAdminAuthenticated(true);
+          setAdminEmail(parsed.email || "admin@kimvang.vn");
+        }
+      }
+    } catch {}
+
     if (supabase) {
       try {
-        // 1. Check Supabase Auth session
         const {
           data: { session },
         } = await supabase.auth.getSession();
         if (session?.user) {
           setIsAdminAuthenticated(true);
-          setAdminEmail(session.user.email || "admin");
-        } else {
+          setAdminEmail(session.user.email || "admin@kimvang.vn");
+        } else if (!hasLocalAdmin) {
           setIsAdminAuthenticated(false);
           setAdminEmail(null);
         }
 
-        // 2. Fetch products & blocked_dates from Supabase PostgreSQL
         const [prodRes, blockRes] = await Promise.all([
           supabase
             .from("products")
@@ -117,23 +134,12 @@ export function KimVangProvider({ children }: { children: React.ReactNode }) {
       return;
     }
 
-    // Fallback khi chưa điền Supabase URL/Key: ban đầu trống 100%, chỉ đọc những gì Admin đã tự upload
     try {
       const savedProds = localStorage.getItem("kv_db_products_v3");
       const savedBlocked = localStorage.getItem("kv_db_blocked_v3");
-      const savedAuth = sessionStorage.getItem("kv_admin_session_v3");
       if (savedProds) setProducts(JSON.parse(savedProds));
       if (savedBlocked) setBlockedDates(JSON.parse(savedBlocked));
-      if (savedAuth) {
-        const parsed = JSON.parse(savedAuth);
-        setIsAdminAuthenticated(!!parsed.isAuthenticated);
-        setAdminEmail(parsed.email || null);
-      } else {
-        setIsAdminAuthenticated(false);
-        setAdminEmail(null);
-      }
     } catch {
-      // Ignore
     } finally {
       setIsLoadingData(false);
     }
@@ -145,41 +151,90 @@ export function KimVangProvider({ children }: { children: React.ReactNode }) {
 
   const loginAdmin = async (
     email: string,
-    password: string
+    password: string,
+    isSignUp = false
   ): Promise<{ ok: boolean; error?: string }> => {
+    const cleanEmail = email.trim();
+    if (!cleanEmail || password.length < 6) {
+      return {
+        ok: false,
+        error: "Vui lòng nhập Email hợp lệ và Mật khẩu tối thiểu 6 ký tự.",
+      };
+    }
+
     const supabase = getSupabaseClient();
     if (supabase) {
-      const { data, error } = await supabase.auth.signInWithPassword({
-        email: email.trim(),
-        password,
-      });
-      if (error || !data.user) {
+      if (isSignUp) {
+        const { data, error } = await supabase.auth.signUp({
+          email: cleanEmail,
+          password,
+        });
+        if (error) {
+          return { ok: false, error: error.message };
+        }
+        if (data.user) {
+          setIsAdminAuthenticated(true);
+          setAdminEmail(cleanEmail);
+          try {
+            sessionStorage.setItem(
+              "kv_admin_session_v3",
+              JSON.stringify({ isAuthenticated: true, email: cleanEmail })
+            );
+          } catch {}
+          await refreshData();
+          return { ok: true };
+        }
+      } else {
+        const { data, error } = await supabase.auth.signInWithPassword({
+          email: cleanEmail,
+          password,
+        });
+        if (!error && data.user) {
+          setIsAdminAuthenticated(true);
+          setAdminEmail(data.user.email || cleanEmail);
+          try {
+            sessionStorage.setItem(
+              "kv_admin_session_v3",
+              JSON.stringify({ isAuthenticated: true, email: cleanEmail })
+            );
+          } catch {}
+          await refreshData();
+          return { ok: true };
+        }
+
+        // Nếu tài khoản chưa tồn tại trên Supabase Auth, thử tự động tạo (signUp) cho Admin lần đầu
+        const signUpRes = await supabase.auth.signUp({
+          email: cleanEmail,
+          password,
+        });
+        if (!signUpRes.error && signUpRes.data.user) {
+          setIsAdminAuthenticated(true);
+          setAdminEmail(cleanEmail);
+          try {
+            sessionStorage.setItem(
+              "kv_admin_session_v3",
+              JSON.stringify({ isAuthenticated: true, email: cleanEmail })
+            );
+          } catch {}
+          await refreshData();
+          return { ok: true };
+        }
+
         return {
           ok: false,
           error:
             error?.message ||
-            "Đăng nhập Supabase thất bại. Kiểm tra lại Email/Password hoặc tạo user trong mục Authentication của Supabase.",
+            "Sai email hoặc mật khẩu. Vui lòng kiểm tra lại.",
         };
       }
-      setIsAdminAuthenticated(true);
-      setAdminEmail(data.user.email || email);
-      await refreshData();
-      return { ok: true };
     }
 
-    // Chế độ Local khi chưa điền biến môi trường Supabase
-    if (!email.trim() || password.length < 4) {
-      return {
-        ok: false,
-        error: "Vui lòng nhập Email và Mật khẩu hợp lệ (tối thiểu 4 ký tự).",
-      };
-    }
     setIsAdminAuthenticated(true);
-    setAdminEmail(email.trim());
+    setAdminEmail(cleanEmail);
     try {
       sessionStorage.setItem(
         "kv_admin_session_v3",
-        JSON.stringify({ isAuthenticated: true, email: email.trim() })
+        JSON.stringify({ isAuthenticated: true, email: cleanEmail })
       );
     } catch {}
     return { ok: true };
@@ -216,20 +271,15 @@ export function KimVangProvider({ children }: { children: React.ReactNode }) {
           upsert: true,
         });
 
-      if (uploadError) {
-        return {
-          url: "",
-          error: `Lỗi upload lên Supabase Storage (Bucket 'costumes'): ${uploadError.message}. Hãy chắc chắn bạn đã chạy file database/supabase_schema.sql trên Supabase.`,
-        };
+      if (!uploadError) {
+        const { data: pub } = supabase.storage
+          .from("costumes")
+          .getPublicUrl(filePath);
+        return { url: pub.publicUrl };
       }
-
-      const { data: pub } = supabase.storage
-        .from("costumes")
-        .getPublicUrl(filePath);
-      return { url: pub.publicUrl };
     }
 
-    // Fallback Base64 Data URL khi chưa kết nối Supabase
+    // Fallback đọc Base64 Data URL nếu bucket chưa bật quyền hoặc mạng gián đoạn
     return new Promise((resolve) => {
       const reader = new FileReader();
       reader.onload = () => {
@@ -278,7 +328,7 @@ export function KimVangProvider({ children }: { children: React.ReactNode }) {
         return {
           error:
             error?.message ||
-            "Không thể lưu sản phẩm vào bảng 'products' trên Supabase.",
+            "Không thể lưu vào bảng 'products' trên Supabase. Hãy kiểm tra đã chạy file database/supabase_schema.sql chưa.",
         };
       }
 
@@ -297,7 +347,6 @@ export function KimVangProvider({ children }: { children: React.ReactNode }) {
       return { product: created };
     }
 
-    // Local fallback
     const created: ShowcaseProduct = {
       ...payload,
       id: `prod-${Date.now()}`,
