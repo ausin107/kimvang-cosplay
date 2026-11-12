@@ -116,7 +116,7 @@ export default function CatalogListingPage() {
         <div className="grid grid-cols-1 gap-1.5 text-xs">
           {[
             { id: "ALL", label: "Tất cả trang phục" },
-            { id: "AVAILABLE_ONLY", label: "Chỉ hiện bộ Đang sẵn có (ON)" },
+            { id: "AVAILABLE_ONLY", label: "Chỉ hiện bộ Đang sẵn có" },
           ].map((opt) => (
             <button
               key={opt.id}

@@ -9,7 +9,6 @@ import {
   X,
   Sparkles,
   MessageCircle,
-  LayoutDashboard,
 } from "lucide-react";
 import { useKimVang } from "@/context/KimVangContext";
 import { formatVND, SHOP_CONFIG } from "@/data/mockData";
@@ -22,8 +21,6 @@ export function Navbar() {
   const [searchQuery, setSearchQuery] = useState("");
   const [showMobileSearch, setShowMobileSearch] = useState(false);
   const [showMobileMenu, setShowMobileMenu] = useState(false);
-
-  const isAdmin = pathname?.startsWith("/admin");
 
   const searchResults =
     searchQuery.trim().length > 0
@@ -49,23 +46,17 @@ export function Navbar() {
                 giặt hấp 100%
               </span>
             </p>
-            <div className="hidden md:flex items-center gap-4 text-zinc-300">
+            <div className="hidden md:flex items-center gap-3 text-zinc-300 text-xs">
+              <span className="text-zinc-400">Giờ mở cửa: <strong className="text-white">09:00 - 21:00</strong></span>
+              <span>•</span>
               <a
                 href={`https://zalo.me/${SHOP_CONFIG.zaloPhone}`}
                 target="_blank"
                 rel="noreferrer"
-                className="hover:text-gold transition-colors"
+                className="text-gold hover:underline font-semibold"
               >
-                Zalo: {SHOP_CONFIG.zaloPhone}
+                Hotline/Zalo: {SHOP_CONFIG.zaloPhone}
               </a>
-              <span>•</span>
-              <Link
-                href={isAdmin ? "/" : "/admin"}
-                className="text-gold font-medium hover:underline flex items-center gap-1"
-              >
-                <LayoutDashboard className="w-3.5 h-3.5" />
-                {isAdmin ? "Về Trang Khách Xem Đồ" : "Quản trị viên (/admin)"}
-              </Link>
             </div>
           </div>
         </div>
@@ -129,17 +120,6 @@ export function Navbar() {
               }`}
             >
               Hỏi đáp & Bảo quản
-            </Link>
-            <Link
-              href="/admin"
-              className={`px-3.5 py-1.5 rounded-full text-xs font-semibold border transition-all flex items-center gap-1.5 ${
-                isAdmin
-                  ? "bg-jet text-gold border-gold"
-                  : "bg-gold/10 text-charcoal border-gold/30 hover:bg-gold/20"
-              }`}
-            >
-              <LayoutDashboard className="w-3.5 h-3.5 text-gold-dark" />
-              Admin CMS (/admin)
             </Link>
           </nav>
 
@@ -320,35 +300,28 @@ export function Navbar() {
                   onClick={() => setShowMobileMenu(false)}
                   className="px-3 py-2.5 rounded-lg hover:bg-offwhite"
                 >
-                  1. Trang chủ (Lookbook & Kệ hàng)
+                  Trang chủ
                 </Link>
                 <Link
                   href="/catalog"
                   onClick={() => setShowMobileMenu(false)}
                   className="px-3 py-2.5 rounded-lg hover:bg-offwhite"
                 >
-                  2. Catalog Trang phục & Lịch trống
+                  Catalog Trang phục & Lịch trống
                 </Link>
                 <Link
                   href="/faq"
                   onClick={() => setShowMobileMenu(false)}
                   className="px-3 py-2.5 rounded-lg hover:bg-offwhite"
                 >
-                  3. Hỏi đáp & Cẩm nang Bảo quản
-                </Link>
-                <div className="my-2 border-t border-hairline" />
-                <Link
-                  href="/admin"
-                  onClick={() => setShowMobileMenu(false)}
-                  className="px-3 py-2.5 rounded-lg bg-jet text-gold font-semibold flex items-center gap-2"
-                >
-                  <LayoutDashboard className="w-4 h-4" />
-                  Quản trị viên (/admin)
+                  Hỏi đáp & Cẩm nang Bảo quản
                 </Link>
               </nav>
             </div>
-            <div className="text-xs text-muted border-t border-hairline pt-3">
-              KimVang Cosplay Showcase • All-in-One trên Vercel (0đ/tháng)
+            <div className="text-xs text-muted border-t border-hairline pt-3 space-y-1">
+              <p className="font-semibold text-charcoal">KimVang Cosplay Showcase</p>
+              <p>Hotline/Zalo: <strong>{SHOP_CONFIG.zaloPhone}</strong></p>
+              <p>Mở cửa: 09:00 - 21:00 hàng ngày</p>
             </div>
           </div>
         </div>

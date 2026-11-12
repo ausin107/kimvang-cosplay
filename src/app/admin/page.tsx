@@ -26,6 +26,7 @@ import {
   isDateBlockedForProduct,
 } from "@/data/mockData";
 import { ProductCategory, ShowcaseProduct } from "@/types/kimvang";
+import { formatFileSize } from "@/lib/imageCompression";
 
 const NOV_2026_DAYS = Array.from({ length: 30 }, (_, i) => {
   const day = String(i + 1).padStart(2, "0");
@@ -179,22 +180,37 @@ export default function AdminDashboardPage() {
     setUploadingImage(true);
     setErrorMsg("");
     setUploadStatusMsg(
-      `Đang tải ${files.length} ảnh lên Supabase Storage (costumes)...`
+      `Đang tự động nén và tải ${files.length} ảnh lên Supabase Storage...`
     );
 
     const newUrls: string[] = [];
+    let totalOrig = 0;
+    let totalComp = 0;
+
     for (let i = 0; i < files.length; i++) {
       const res = await uploadImageFile(files[i]);
       if (res.error) {
         setErrorMsg(res.error);
       } else if (res.url) {
         newUrls.push(res.url);
+        if (res.stats) {
+          totalOrig += res.stats.originalSize;
+          totalComp += res.stats.compressedSize;
+        }
       }
     }
 
     if (newUrls.length > 0) {
       setUploadedImages((prev) => [...prev, ...newUrls]);
-      setUploadStatusMsg(`✓ Đã tải lên thành công ${newUrls.length} ảnh!`);
+      const savedPercent =
+        totalOrig > 0
+          ? Math.round(((totalOrig - totalComp) / totalOrig) * 100)
+          : 0;
+      setUploadStatusMsg(
+        `✓ Đã tối ưu & tải lên ${newUrls.length} ảnh (${formatFileSize(
+          totalOrig
+        )} ➔ ${formatFileSize(totalComp)}, tiết kiệm ${savedPercent}% dung lượng)!`
+      );
     } else {
       setUploadStatusMsg("");
     }
@@ -752,7 +768,7 @@ export default function AdminDashboardPage() {
                   <label className="font-bold text-charcoal flex items-center gap-2 cursor-pointer">
                     <UploadCloud className="w-5 h-5 text-gold-dark shrink-0" />
                     <span>
-                      Chọn ảnh từ máy tính (Hỗ trợ chọn nhiều ảnh cùng lúc):
+                      Chọn ảnh từ máy tính (Tự động nén WebP siêu nhẹ, chọn nhiều ảnh cùng lúc):
                     </span>
                     <input
                       type="file"

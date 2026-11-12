@@ -8,11 +8,10 @@ import {
   MessageCircle,
   PackageCheck,
   ArrowRight,
-  UploadCloud,
-  Lock,
 } from "lucide-react";
 import { useKimVang } from "@/context/KimVangContext";
 import { ProductCard } from "@/components/ProductCard";
+import { SHOP_CONFIG } from "@/data/mockData";
 
 const QUICK_CATEGORIES = [
   {
@@ -53,7 +52,7 @@ const QUICK_CATEGORIES = [
 ];
 
 export default function HomePage() {
-  const { visibleProducts, isLoadingData, isAdminAuthenticated } = useKimVang();
+  const { visibleProducts, isLoadingData } = useKimVang();
   const [quickFilter, setQuickFilter] = useState<"ALL" | "AVAILABLE_ONLY">(
     "ALL"
   );
@@ -65,19 +64,18 @@ export default function HomePage() {
 
   return (
     <div className="max-w-8xl mx-auto px-4 sm:px-6 py-6 sm:py-8 space-y-10 sm:space-y-14">
-      {/* 1. KỆ TRANG PHỤC TRƯNG BÀY (Đặt lên đầu tiên: nếu chưa có gì sẽ mời đăng nhập Admin) */}
+      {/* 1. KỆ TRANG PHỤC TRƯNG BÀY */}
       <section className="space-y-5">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div>
             <span className="text-[11px] font-mono uppercase tracking-widest text-gold-dark">
-              KIMVANG COSPLAY SHOWCASE • LIVE SUPABASE CATALOG
+              BỘ SƯU TẬP TRANG PHỤC MỚI NHẤT
             </span>
             <h1 className="font-display font-bold text-xl sm:text-3xl text-charcoal mt-0.5">
-              Kệ Trang Phục Cosplay Trên Web
+              Kệ Trang Phục Cosplay Nổi Bật
             </h1>
             <p className="text-xs sm:text-sm text-muted">
-              Toàn bộ trang phục được tải trực tiếp từ cơ sở dữ liệu Supabase
-              bởi Quản trị viên
+              Xem chi tiết số đo, kiểm tra lịch trống và hỗ trợ giữ đồ nhanh cho các mùa Festival
             </p>
           </div>
 
@@ -110,42 +108,36 @@ export default function HomePage() {
 
         {isLoadingData ? (
           <div className="p-12 rounded-3xl bg-white border border-hairline text-center text-sm text-muted">
-            Đang tải dữ liệu trang phục từ Database...
+            Đang tải dữ liệu trang phục...
           </div>
         ) : visibleProducts.length === 0 ? (
-          /* TRẠNG THÁI MẶC ĐỊNH KHI MỚI VÀO: CHƯA CÓ SẢN PHẨM NÀO HẾT -> BUỘC ĐĂNG NHẬP ADMIN ĐỂ UPLOAD */
-          <div className="p-8 sm:p-14 rounded-3xl bg-white border-2 border-dashed border-gold/60 text-center space-y-4 max-w-2xl mx-auto my-6 shadow-2xs">
+          <div className="p-8 sm:p-14 rounded-3xl bg-white border border-hairline text-center space-y-4 max-w-2xl mx-auto my-6 shadow-2xs">
             <div className="w-14 h-14 rounded-2xl bg-jet text-gold flex items-center justify-center mx-auto border border-gold/40">
-              <UploadCloud className="w-7 h-7" />
+              <Sparkles className="w-7 h-7 text-gold" />
             </div>
             <div className="space-y-1.5">
               <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full text-[11px] font-semibold bg-gold/15 text-gold-dark">
-                <Sparkles className="w-3 h-3" /> KỆ HÀNG ĐANG TRỐNG (0 SẢN PHẨM)
+                BỘ SƯU TẬP ĐANG ĐƯỢC CẬP NHẬT
               </span>
               <h2 className="font-display font-bold text-xl sm:text-2xl text-charcoal">
-                Chưa có trang phục nào được tải lên hệ thống
+                Các mẫu trang phục mới đang được lên kệ
               </h2>
               <p className="text-xs sm:text-sm text-muted max-w-md mx-auto leading-relaxed">
-                Hệ thống khởi tạo trắng hoàn toàn (không có dữ liệu mẫu). Vui
-                lòng đăng nhập vào trang <strong>Quản trị viên (/admin)</strong>{" "}
-                để upload ảnh lên Supabase Storage và lưu thông tin bộ đồ đầu
-                tiên vào Database.
+                Shop đang liên tục cập nhật thêm trang phục và phụ kiện mới. Nếu bạn đang cần thuê đồ gấp cho sự kiện sắp tới, vui lòng liên hệ trực tiếp qua Zalo để được gửi ảnh và tư vấn giữ đồ ngay nhé!
               </p>
             </div>
 
             <div className="pt-2 flex flex-col sm:flex-row items-center justify-center gap-3">
-              <Link
-                href={isAdminAuthenticated ? "/admin" : "/admin/login"}
+              <a
+                href={`https://zalo.me/${SHOP_CONFIG.zaloPhone}`}
+                target="_blank"
+                rel="noreferrer"
                 className="h-12 px-6 rounded-xl bg-jet text-gold font-display font-bold text-sm flex items-center justify-center gap-2 hover:bg-zinc-800 transition-colors"
               >
-                <Lock className="w-4 h-4" />
-                <span>
-                  {isAdminAuthenticated
-                    ? "Vào Trang Admin Để Upload Đồ Ngay"
-                    : "Đăng Nhập Admin Để Upload Đồ Lên Web"}
-                </span>
+                <MessageCircle className="w-4 h-4" />
+                <span>Nhắn Zalo Tư Vấn ({SHOP_CONFIG.zaloPhone})</span>
                 <ArrowRight className="w-4 h-4" />
-              </Link>
+              </a>
             </div>
           </div>
         ) : (
@@ -246,7 +238,7 @@ export default function HomePage() {
                 3. Chốt lịch nhanh & Nhận đồ
               </p>
               <p className="text-xs text-muted mt-1 leading-relaxed">
-                Admin xác nhận giữ đồ và khóa lịch trên web ngay lập tức. Nhận đồ
+                Shop xác nhận giữ đồ và khóa lịch trên web ngay lập tức. Nhận đồ
                 trước Fes 1 ngày, trả đồ không cần giặt.
               </p>
             </div>

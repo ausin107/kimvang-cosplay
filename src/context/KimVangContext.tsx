@@ -9,6 +9,7 @@ import React, {
 } from "react";
 import { ShowcaseProduct, BlockedDateRange } from "@/types/kimvang";
 import { getSupabaseClient, getSupabaseConfig } from "@/lib/supabase";
+import { compressImage, CompressionStats } from "@/lib/imageCompression";
 
 interface KimVangContextType {
   products: ShowcaseProduct[];
@@ -22,11 +23,14 @@ interface KimVangContextType {
   refreshData: () => Promise<void>;
   loginAdmin: (
     email: string,
-    password: string,
-    isSignUp?: boolean
+    password: string
   ) => Promise<{ ok: boolean; error?: string }>;
   logoutAdmin: () => Promise<void>;
-  uploadImageFile: (file: File) => Promise<{ url: string; error?: string }>;
+  uploadImageFile: (file: File) => Promise<{
+    url: string;
+    error?: string;
+    stats?: CompressionStats;
+  }>;
   toggleProductAvailability: (productId: string) => Promise<void>;
   toggleProductHidden: (productId: string) => Promise<void>;
   addProduct: (
@@ -81,19 +85,6 @@ export function KimVangProvider({ children }: { children: React.ReactNode }) {
     const supabase = getSupabaseClient();
     setIsSupabaseConnected(isConfigured && !!supabase);
 
-    let hasLocalAdmin = false;
-    try {
-      const savedAuth = sessionStorage.getItem("kv_admin_session_v3");
-      if (savedAuth) {
-        const parsed = JSON.parse(savedAuth);
-        if (parsed.isAuthenticated) {
-          hasLocalAdmin = true;
-          setIsAdminAuthenticated(true);
-          setAdminEmail(parsed.email || "admin@kimvang.vn");
-        }
-      }
-    } catch {}
-
     if (supabase) {
       try {
         const {
@@ -101,8 +92,8 @@ export function KimVangProvider({ children }: { children: React.ReactNode }) {
         } = await supabase.auth.getSession();
         if (session?.user) {
           setIsAdminAuthenticated(true);
-          setAdminEmail(session.user.email || "admin@kimvang.vn");
-        } else if (!hasLocalAdmin) {
+          setAdminEmail(session.user.email || null);
+        } else {
           setIsAdminAuthenticated(false);
           setAdminEmail(null);
         }
@@ -156,108 +147,88 @@ export function KimVangProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     refreshData();
+
+    const supabase = getSupabaseClient();
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (session?.user) {
+        setIsAdminAuthenticated(true);
+        setAdminEmail(session.user.email || null);
+      } else {
+        setIsAdminAuthenticated(false);
+        setAdminEmail(null);
+      }
+    });
+
+    return () => {
+      subscription.unsubscribe();
+    };
   }, [refreshData]);
 
   const loginAdmin = async (
     email: string,
-    password: string,
-    isSignUp = false
+    password: string
   ): Promise<{ ok: boolean; error?: string }> => {
     const cleanEmail = email.trim();
-    if (!cleanEmail || password.length < 6) {
+    if (!cleanEmail || !password) {
       return {
         ok: false,
-        error: "Vui lòng nhập Email hợp lệ và Mật khẩu tối thiểu 6 ký tự.",
+        error: "Vui lòng nhập đầy đủ Email và Mật khẩu.",
       };
     }
 
     const supabase = getSupabaseClient();
-    if (supabase) {
-      if (isSignUp) {
-        const { data, error } = await supabase.auth.signUp({
-          email: cleanEmail,
-          password,
-        });
-        if (!error && data.user) {
-          setIsAdminAuthenticated(true);
-          setAdminEmail(cleanEmail);
-          try {
-            sessionStorage.setItem(
-              "kv_admin_session_v3",
-              JSON.stringify({ isAuthenticated: true, email: cleanEmail })
-            );
-          } catch {}
-          await refreshData();
-          return { ok: true };
-        }
-      } else {
-        const { data, error } = await supabase.auth.signInWithPassword({
-          email: cleanEmail,
-          password,
-        });
-        if (!error && data.user) {
-          setIsAdminAuthenticated(true);
-          setAdminEmail(data.user.email || cleanEmail);
-          try {
-            sessionStorage.setItem(
-              "kv_admin_session_v3",
-              JSON.stringify({ isAuthenticated: true, email: cleanEmail })
-            );
-          } catch {}
-          await refreshData();
-          return { ok: true };
-        }
+    const { data, error } = await supabase.auth.signInWithPassword({
+      email: cleanEmail,
+      password,
+    });
 
-        // Tự động đăng ký tài khoản Admin lần đầu nếu chưa tồn tại trên Supabase Auth
-        const signUpRes = await supabase.auth.signUp({
-          email: cleanEmail,
-          password,
-        });
-        if (!signUpRes.error && signUpRes.data.user) {
-          setIsAdminAuthenticated(true);
-          setAdminEmail(cleanEmail);
-          try {
-            sessionStorage.setItem(
-              "kv_admin_session_v3",
-              JSON.stringify({ isAuthenticated: true, email: cleanEmail })
-            );
-          } catch {}
-          await refreshData();
-          return { ok: true };
-        }
-      }
+    if (error || !data.user) {
+      return {
+        ok: false,
+        error: "Email hoặc mật khẩu không chính xác.",
+      };
     }
 
     setIsAdminAuthenticated(true);
-    setAdminEmail(cleanEmail);
-    try {
-      sessionStorage.setItem(
-        "kv_admin_session_v3",
-        JSON.stringify({ isAuthenticated: true, email: cleanEmail })
-      );
-    } catch {}
+    setAdminEmail(data.user.email || cleanEmail);
+    await refreshData();
     return { ok: true };
   };
 
   const logoutAdmin = async () => {
     const supabase = getSupabaseClient();
-    if (supabase) {
-      await supabase.auth.signOut();
-    }
+    await supabase.auth.signOut();
     setIsAdminAuthenticated(false);
     setAdminEmail(null);
-    try {
-      sessionStorage.removeItem("kv_admin_session_v3");
-    } catch {}
   };
 
   const uploadImageFile = async (
     file: File
-  ): Promise<{ url: string; error?: string }> => {
+  ): Promise<{
+    url: string;
+    error?: string;
+    stats?: CompressionStats;
+  }> => {
+    // 1. Tự động nén ảnh client-side (giảm từ 5-15MB xuống ~150-350KB chuẩn WebP)
+    const {
+      file: fileToUpload,
+      originalSize,
+      compressedSize,
+      reductionPercentage,
+    } = await compressImage(file);
+
+    const stats: CompressionStats = {
+      originalSize,
+      compressedSize,
+      reductionPercentage,
+    };
+
     const supabase = getSupabaseClient();
     if (supabase) {
-      const ext = file.name.split(".").pop() || "jpg";
-      const safeName = file.name
+      const ext = fileToUpload.name.split(".").pop() || "webp";
+      const safeName = fileToUpload.name
         .replace(/\.[^/.]+$/, "")
         .toLowerCase()
         .replace(/[^a-z0-9-_]/g, "-");
@@ -265,8 +236,9 @@ export function KimVangProvider({ children }: { children: React.ReactNode }) {
 
       const { error: uploadError } = await supabase.storage
         .from("costumes")
-        .upload(filePath, file, {
-          cacheControl: "3600",
+        .upload(filePath, fileToUpload, {
+          contentType: fileToUpload.type || "image/webp",
+          cacheControl: "31536000, public",
           upsert: true,
         });
 
@@ -274,7 +246,7 @@ export function KimVangProvider({ children }: { children: React.ReactNode }) {
         const { data: pub } = supabase.storage
           .from("costumes")
           .getPublicUrl(filePath);
-        return { url: pub.publicUrl };
+        return { url: pub.publicUrl, stats };
       }
     }
 
@@ -282,14 +254,14 @@ export function KimVangProvider({ children }: { children: React.ReactNode }) {
       const reader = new FileReader();
       reader.onload = () => {
         if (typeof reader.result === "string") {
-          resolve({ url: reader.result });
+          resolve({ url: reader.result, stats });
         } else {
           resolve({ url: "", error: "Không thể đọc file ảnh." });
         }
       };
       reader.onerror = () =>
         resolve({ url: "", error: "Không thể đọc file ảnh." });
-      reader.readAsDataURL(file);
+      reader.readAsDataURL(fileToUpload);
     });
   };
 
